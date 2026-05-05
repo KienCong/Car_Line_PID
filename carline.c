@@ -17,6 +17,7 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
+#include "main.h"
 #include <stdbool.h>
 #include <stdlib.h>
 /* Private includes ----------------------------------------------------------*/
@@ -58,9 +59,15 @@
 #define LIMIT_BOT  -850
 
 // PID
-#define KP 70.0f
+//#define KP 70.0f
+//#define KI 0.0001f
+//#define KD 35.0f
+#define KP 55.0f
 #define KI 0.0001f
-#define KD 35.0f
+#define KD 18.0f
+//#define KP 60.0f
+//#define KI 0.0001f
+//#define KD 30.0f
 
 /* USER CODE END PTD */
 
@@ -72,14 +79,15 @@
 /* USER CODE BEGIN PM */
 /* ========================================================================= */
 /* ================= STRUCT ================= */
-struct DataLine {
-    uint8_t s1:1, s2:1, s3:1, s4:1, s5:1;
-};
+//struct DataLine {
+//    uint8_t s1:1, s2:1, s3:1, s4:1, s5:1;
+//};
 
-union MapLine {
-    struct DataLine data;
-    uint8_t state;
-} raw;
+//union MapLine {
+//    struct DataLine data;
+ //   uint8_t state;
+//} raw;
+uint8_t raw_state = 0;
 
 struct CarControl {
     float P, I, D;
@@ -151,87 +159,124 @@ void go_custom(int speedL, int speedR) {
     }
 }
 void motor_control(void) {
-    // đọc sensor (đảo nếu cần: !HAL_GPIO_ReadPin)
-    raw.data.s1 = HAL_GPIO_ReadPin(SENSOR_PORT, S1_PIN);
-    raw.data.s2 = HAL_GPIO_ReadPin(SENSOR_PORT, S2_PIN);
-    raw.data.s3 = HAL_GPIO_ReadPin(SENSOR_PORT, S3_PIN);
-    raw.data.s4 = HAL_GPIO_ReadPin(SENSOR_PORT, S4_PIN);
-    raw.data.s5 = HAL_GPIO_ReadPin(SENSOR_PORT, S5_PIN);
+	  // ===== ĐỌC SENSOR =====
+	    raw_state = 0;
+	    raw_state |= HAL_GPIO_ReadPin(SENSOR_PORT, S1_PIN) << 4;
+	    raw_state |= HAL_GPIO_ReadPin(SENSOR_PORT, S2_PIN) << 3;
+	    raw_state |= HAL_GPIO_ReadPin(SENSOR_PORT, S3_PIN) << 2;
+	    raw_state |= HAL_GPIO_ReadPin(SENSOR_PORT, S4_PIN) << 1;
+	    raw_state |= HAL_GPIO_ReadPin(SENSOR_PORT, S5_PIN) << 0;
 
+	    if (raw_state == 31) {   // 31 chính là 0b11111
+	   	                go_custom(0, 0);     // Cấp tốc độ 0 cho cả 2 bánh để phanh lại
+	   	                while(1);
+	   	              //  return;              // Thoát hàm ngay lập tức, không chạy xuống PID nữa
+	   	            }
     // 2. Xử lý mất vạch (Search Mode - Tăng mạnh lực xoay)
-        if (raw.state == 0) {
-            // Tăng tốc độ lên mức 700-800 để đảm bảo thắng được ma sát sàn
-            int search_speed_boost = 750; // Bánh tiến
-            int search_speed_back  = -700; // Bánh lùi (phanh gắt)
+	    // 2. Xử lý mất vạch (Search Mode)
+	        if (raw_state == 0) {
+	        	int boost = 900;
+	        	int back  = -850;
 
-            if (car.lastDirection) {
-                // Lệch phải -> Xoay trái: Bánh phải tiến, bánh trái lùi
-                go_custom(search_speed_boost, search_speed_back);
-            }
-            else {
-                // Lệch trái -> Xoay phải: Bánh trái tiến, bánh phải lùi
-                go_custom(search_speed_back, search_speed_boost);
-            }
-            return;
-        }
+	            if (car.lastDirection == 1) {
+	                // Vừa lệch PHẢI (vạch bên trái) -> Cần xoay TRÁI
+	                // Bánh Trái Lùi (back), Bánh Phải Tiến (boost)
+	                go_custom(back, boost);
+	            //	go_custom(boost, back);
+	            }
+	            else {
+	                // Vừa lệch TRÁI (vạch bên phải) -> Cần xoay PHẢI
+	                // Bánh Trái Tiến (boost), Bánh Phải Lùi (back)
+	                go_custom(boost, back);
+	            //	go_custom(back, boost);
+	            }
+	            return;
+	        }
 
         // mapping error (ĐÃ ĐẢO DẤU ĐỂ CHUẨN HÓA)
-            switch (raw.state) {
-                // ---- VẠCH BÊN TRÁI (Xe đang lệch Phải -> Cần rẽ Trái) ----
-                case 12: car.errorNow = -1; car.lastDirection = 1; break;
-                case 8:  car.errorNow = -2; car.lastDirection = 1; break;
-                case 24: car.errorNow = -3; car.lastDirection = 1; break;
-                case 16: car.errorNow = -5; car.lastDirection = 1; break;
+        switch (raw_state) {
+                // ---- VẠCH BÊN PHẢI (Xe đang lệch Trái -> Cần rẽ PHẢI) ----
+        // ===== TRÁI =====
+        case 16: car.errorNow = -8; car.lastDirection = 1; break;
+        case 24: car.errorNow = -4; car.lastDirection = 1; break;
+        case 8:  car.errorNow = -2; car.lastDirection = 1; break;
+        case 12: car.errorNow = -1; car.lastDirection = 1; break;
 
-                // ---- VẠCH BÊN PHẢI (Xe đang lệch Trái -> Cần rẽ Phải) ----
-                case 6:  car.errorNow = 1;  car.lastDirection = 0; break;
-                case 2:  car.errorNow = 2;  car.lastDirection = 0; break;
-                case 3:  car.errorNow = 3;  car.lastDirection = 0; break;
-                case 1:  car.errorNow = 5;  car.lastDirection = 0; break;
+        // ===== GIỮA =====
+        case 4:  car.errorNow = 0; car.I = 0; break;
 
-                case 4:  car.errorNow = 0;  car.I = 0; break;
+        // ===== PHẢI =====
+        case 6:  car.errorNow = 1;  car.lastDirection = 0; break;
+        case 2:  car.errorNow = 2;  car.lastDirection = 0; break;
+        case 3:  car.errorNow = 4;  car.lastDirection = 0; break;
+        case 1:  car.errorNow = 8;  car.lastDirection = 0; break;
 
-                // ---- GÓC VUÔNG BÊN PHẢI (Vạch nằm ngang bên Phải) ----
-                case 7:
-                case 15:
-                    car.errorNow = 6;  // Trị dương để rẽ Phải
-                    car.lastDirection = 0;
-                    break;
+        // ---- GÓC VUÔNG BÊN PHẢI (Error Dương để rẽ Phải) ----
+        case 7:
+        case 15:
+            car.errorNow = 6;
+            car.lastDirection = 0;
+            break;
 
-                // ---- GÓC VUÔNG BÊN TRÁI (Vạch nằm ngang bên Trái) ----
-                case 28:
-                case 30:
-                    car.errorNow = -6; // Trị âm để rẽ Trái
-                    car.lastDirection = 1;
-                    break;
+                // ---- GÓC VUÔNG BÊN TRÁI (Error Âm để rẽ Trái) ----
+         case 28:
+         case 30:
+           car.errorNow = -6;
+           car.lastDirection = 1;
+               break;
 
-                case 31: car.errorNow = car.errorPrev; break;
-                default: car.errorNow = car.errorPrev; break;
+      //   case 31: car.errorNow = car.errorPrev; break;
+         case 31: car.errorNow = 0; break;
+         default: car.errorNow = car.errorPrev; break;
             }
-
             // PID calculation
-            car.P = car.errorNow;
-            car.I = constrain(car.I + car.P, -200, 200);
-            car.D = car.P - car.errorPrev;
-            car.errorPrev = car.errorNow;
+       //     car.P = car.errorNow;
+           // car.I = constrain(car.I + car.P, -200, 200);
+      //      if (abs(car.errorNow) > 3) {
+       //         car.I = 0;
+        //    }
+        //    car.D = car.P - car.errorPrev;
+        //    car.errorPrev = car.errorNow;
 
-            car.PID_value = KP*car.P + KI*car.I + KD*car.D;
+        //    car.PID_value = KP*car.P + KI*car.I + KD*car.D;
+        // 4. ===== PID TỐI ƯU VỚI SAMPLING TIME =====
+        // PID calculation
+        car.P = car.errorNow;
+     //   if (abs(car.errorNow) < 3)
+       //     car.I += car.P;
+    //    else
+     //       car.I = 0;
+    //    car.I = constrain(car.I + car.P, -200, 200);
+    //    car.D = car.P - car.errorPrev;
+     //   car.errorPrev = car.errorNow;
 
-            // Dynamic Speed
-            int base;
-            if (abs(car.errorNow) == 0) base = SPEED_MAX;
-            else if (abs(car.errorNow) <= 2) base = SPEED_MID;
-            else if (abs(car.errorNow) <= 4) base = SPEED_BRAKE;
-            else base = 0;
+     //   car.PID_value = KP*car.P + KI*car.I + KD*car.D;
+        if (abs(car.errorNow) < 3)
+            car.I += car.P;
+        else
+            car.I = 0;
 
-            // ĐẢO DẤU TẠI ĐÂY ĐỂ PHÙ HỢP VỚI HƯỚNG MOTOR CỦA CẬU
-           // Nếu sL = base - PID làm xe chạy ngược, hãy đổi thành sL = base + PID
-            int sL = base + (int)car.PID_value;
-            int sR = base - (int)car.PID_value;
-         //  int sL = base - car.PID_value;
-      //     int sR = base + car.PID_value;
-            go_custom(constrain(sL, LIMIT_BOT, LIMIT_TOP),
-                      constrain(sR, LIMIT_BOT, LIMIT_TOP));
+        car.I = constrain(car.I, -200, 200);
+        car.D = car.P - car.errorPrev;
+        car.errorPrev = car.errorNow;
+        car.PID_value = KP*car.P + KI*car.I + KD*car.D;
+        // Dynamic Speed
+        int base;
+      //  if (abs(car.errorNow) == 0) base = SPEED_MAX;
+     //   else if (abs(car.errorNow) <= 2) base = SPEED_MID;
+     //   else if (abs(car.errorNow) <= 4) base = SPEED_BRAKE;
+    //    else base = 0;
+        base = SPEED_MAX - abs(car.errorNow) * 80;
+        base = constrain(base, 250, SPEED_MAX);
+
+        // ĐẢO DẤU TẠI ĐÂY ĐỂ PHÙ HỢP VỚI HƯỚNG MOTOR CỦA CẬU
+       // Nếu sL = base - PID làm xe chạy ngược, hãy đổi thành sL = base + PID
+        int sL = base + (int)car.PID_value;
+        int sR = base - (int)car.PID_value;
+     //  int sL = base - car.PID_value;
+  //     int sR = base + car.PID_value;
+        go_custom(constrain(sL, LIMIT_BOT, LIMIT_TOP),
+                  constrain(sR, LIMIT_BOT, LIMIT_TOP));
 }
 
 
@@ -279,7 +324,7 @@ int main(void)
   {
     /* USER CODE END WHILE */
 	  motor_control();
-	  HAL_Delay(2); // hoặc 2
+	  HAL_Delay(1);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -432,6 +477,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = GPIO_PIN_1;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
+
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PA4 PA5 */
